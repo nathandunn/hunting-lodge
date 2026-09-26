@@ -1,63 +1,88 @@
-# The Hunting Lodge: A Wodehouse Tale
+# Bludleigh
 
-3D graphic novel adaptation of P.G. Wodehouse's pacifist couple corrupted by a hunting lodge's spirit.
+A 3D graphic novel in Godot 4.4. Two gentle poets visit a house that has been
+killing things for four hundred years, and the house wins.
 
-## Features
+A loose adaptation of P. G. Wodehouse's *Unpleasantness at Bludleigh Court*
+(*Mr Mulliner Speaking*, 1929): the premise and the people — Charlotte
+Mulliner, Aubrey Bassinger, Sir Alexander and a family that talks of nothing
+but what it has shot — told by Mr Mulliner in the bar-parlour of the Angler's
+Rest. The dialogue is written fresh.
 
-- **Procedural 3D Environments**: Six scenes built from CSG geometry (arrival, great room, dining, gun room, moorland, dusk)
-- **Hand-drawn FaceCard Characters**: Ink-rendered characters using the flipbook project's face extraction and generation pipeline
-- **Character Corruption Arc**: Face rotation and posture animation showing moral decay across scenes
-- **Dynamic Lighting**: Scene-specific presets with smooth transitions (golden hour, fireplace glow, candlelight, clinical white, dramatic moorland, dusk)
-- **Dialogue System**: Wodehouse-voiced captions with precise timing
-- **Keyboard Navigation**: Arrow keys to advance/retreat through scenes
+Spun out of [flipbook-field](https://github.com/nathandunn/flipbook-field): the
+same toon shader and ink outlines, the same paper-doll figures, and the same
+faces — Nathan's pen drawings. Charlotte wears the wavy hair with heavy bangs,
+Aubrey the spiky hair and sunglasses.
 
-## How It Works
+## Read it
 
-**Scene Manager** (`hunting_lodge_scene_manager.gd`) orchestrates:
-- Scene building via `HuntingLodge` (CSG models)
-- Lighting via `HuntingLodgeLighting` (environment + directional + point lights)
-- Character placement and corruption via `HuntingLodgeCharacter` (face rotation + posture)
-- Camera positioning and dialogue playback
+Open `project/` in Godot 4.4 and press F5, or visit the deployed build.
 
-**Character Corruption**:
-- Face angle rotates from neutral (0°) → curious tilt (18°) → profile (40°) → extreme profile (75°) → bowed shame (0°)
-- Posture shifts from upright → stiffening → leaning → assertive → wild → collapsed
-- Same drawn faces, different angles = visual corruption without new art
+Click, tap, Space, Enter or → to turn the page; ← (or tapping the left fifth of
+the page) goes back; Home starts again. Twenty-eight pages.
 
-**Lighting Progression**:
-- Scene 1 (Arrival): Golden hour, soft (0.6 ambient energy)
-- Scene 2 (Great Room): Fireplace amber, intimate point lights (0.4 energy)
-- Scene 3 (Dining): Candlelight, deep shadows (0.3 energy)
-- Scene 4 (Gun Room): Overhead clinical white, sharp shadows (0.8 energy)
-- Scene 5 (Moorland): Low golden sun, fog, dramatic (1.8 dir energy)
-- Scene 6 (Dusk): Purple-blue sky, cool tones, desaturated (0.4 energy)
+## How a page is made
 
-## Controls
+Every page is data in `scripts/story.gd`: which set, which light, where the
+camera stands and what it looks at, who is in the shot — where, facing which
+way, in what pose, wearing and holding what — and the lettering: narrator's
+captions, speech balloons in reading order, sound effects. Pages are
+self-contained, so paging backwards costs the same as forwards.
 
-- **RIGHT / D**: Next scene
-- **LEFT / A**: Previous scene
-- **R**: Reload current scene
-- **ESC**: Quit
+`scripts/main.gd` turns pages: wipe to paper, place the cast, ease the light,
+frame the shot, letter it, wipe back. While a page is open the camera creeps a
+few per cent toward its subject, so a still panel is never quite still.
 
-## Building
+## The transformation
 
-Requires Godot 4.4+
+Nothing about Charlotte and Aubrey's faces changes — they are the same four
+drawings throughout. What changes is everything around them:
 
-```bash
-godot4 --path project --export-release web web/index.html
+- **Shadows.** Every toon surface shares one shadow tint (`Ink.set_shadow_tint`).
+  It starts a cool printer's purple at the Angler's Rest and on arrival, warms
+  through the hall, goes claret at the moment Charlotte's poem turns, and is
+  oxblood on the moor. At dusk it cools again.
+- **Clothes.** The costumes are flipbook-field's pen-drawn office outfits, recast:
+  the legal waistcoat and bow tie make a poet, the marketing turtleneck and
+  scarf make a lady of letters, and the engineer's plaid, re-dyed, makes
+  shooting tweeds. The lovers leave in their own clothes.
+- **Hands.** Poses are targets the paper doll eases toward in six drawn
+  in-betweens: clasped hands on arrival, a gun carried in the gun-room, arms up
+  on the moor, heads bowed on the steps.
+
+## Lettering
+
+`scripts/lettering.gd` draws everything printed on the page: the ink border and
+paper margin (letterboxed on wide establishing shots), caption boxes, balloons
+whose tails find the speaker's head every frame, jagged balloons for shouting,
+sound effects, title plates and the folio. Balloons try above the speaker, then
+beside, and will not sit on anybody's face or break reading order.
+
+Type: Crimson Pro for the lettering, Gloock for titles and sound effects (both
+SIL OFL, licences in `project/fonts/`).
+
+## The sets
+
+`scripts/sets.gd` builds all six from primitives — no editor-placed geometry:
+the Angler's Rest, Bludleigh Court from the drive (with a 1920s tourer and a
+stag for a door-knocker), the great hall (twenty-odd heads, two fish, a bear),
+the dining room, the gun-room, and the moor (heather, a grouse butt, a copse, a
+shot cloud). Each sits at its own spot along X; only the current one is shown.
+
+## Checking the pages
+
+```
+xvfb-run -a godot4 --display-driver x11 --rendering-driver opengl3 \
+  --path project -- --shots=/tmp/shots [--page=N]
 ```
 
-## Deployment
+renders every page (or page N) to PNG under the Compatibility renderer, which
+is the one the browser uses, and quits.
 
-Deploy `web/index.html` and assets to a web server, or to Precog hub:
+## Build and deploy
 
-```bash
-./build.sh
-```
-
-## Credits
-
-- **Story & Dialogue**: P.G. Wodehouse (Mulliner Tales)
-- **Character Faces**: Nathan's pen drawings (flipbook-field project)
-- **Technical Direction**: Nathan Dunn
-- **Implementation**: Claude Haiku 4.5
+`./build.sh` re-exports `web/` (Godot 4.4.1 plus web export templates) and
+gzips the wasm and js for nginx's `gzip_static`. The Dockerfile serves `web/`
+from nginx; `headers.caddy` adds COOP/COEP, without which a threaded Godot web
+build cannot get SharedArrayBuffer and refuses to start. Deployed on the Precog
+hub as `hunting-lodge`, the same way as flipbook-field.
