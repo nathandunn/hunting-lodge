@@ -1,0 +1,14 @@
+*.import
+.DS_Store
+.env
+web/
+build/
+dist/
+node_modules/
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.iml
+.godot/
