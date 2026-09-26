@@ -13,6 +13,10 @@
 extends Node3D
 
 var lighting: Lighting
+var world: Node3D
+## Only the sets actually needed right now — at most current + previous, so
+## the six sets (a thousand-odd mesh instances between them) are never all
+## resident in GPU memory at once. See _ensure_set / _prune_sets.
 var sets: Dictionary = {}
 var cast: Dictionary = {}
 var camera: Camera3D
@@ -28,17 +32,16 @@ var _drift: float = 0.03
 var _turning: bool = false
 var _birds: Node3D
 var _visited: int = 0
+var _prev_set: String = ""
 
 
 func _ready() -> void:
 	RenderingServer.set_default_clear_color(Ink.PAPER)
 	lighting = Lighting.new()
 	add_child(lighting)
-	var world := Node3D.new()
+	world = Node3D.new()
 	world.name = "Sets"
 	add_child(world)
-	sets = Sets.build_all(world)
-	_birds = sets["moor"].get_meta("birds")
 
 	var skins := Ink.SKINS
 	var i := 0
@@ -65,7 +68,38 @@ func _ready() -> void:
 	if shots != "":
 		_render_all(shots)
 		return
+	if _has_flag("--pagecheck"):
+		_pagecheck()
+		return
 	_show(0, true)
+
+
+## Returns the built root for [param name], building it on first use.
+func _ensure_set(name: String) -> Node3D:
+	if sets.has(name):
+		return sets[name]
+	var root := Sets.build_one(name, world)
+	sets[name] = root
+	if name == "moor":
+		_birds = root.get_meta("birds", null)
+	return root
+
+
+## Keeps at most the current set and the one shown just before it — enough for
+## an instant back-page — and frees the rest, so GPU memory never holds more
+## than two sets' worth of geometry at a time.
+func _prune_sets(current: String) -> void:
+	var keep := {current: true}
+	if _prev_set != "":
+		keep[_prev_set] = true
+	for s in sets.keys():
+		if not keep.has(s):
+			var n: Node3D = sets[s]
+			sets.erase(s)
+			if s == "moor":
+				_birds = null
+			n.queue_free()
+	_prev_set = current
 
 
 # --- Pages ------------------------------------------------------------------------
@@ -100,9 +134,11 @@ func _show(i: int, instant: bool) -> void:
 	var pg: Dictionary = pages[i]
 	var set_name: String = pg["set"]
 	var origin := Sets.origin(set_name)
+	var root := _ensure_set(set_name)
 	for s in sets:
 		sets[s].visible = s == set_name
-	var windows: Array = sets["exterior"].get_meta("windows", []) if set_name == "exterior" else []
+	_prune_sets(set_name)
+	var windows: Array = root.get_meta("windows", []) if set_name == "exterior" else []
 	lighting.apply(pg.get("light", "golden"), origin, windows, instant)
 
 	var who: Dictionary = pg.get("cast", {})
@@ -153,7 +189,7 @@ func _process(delta: float) -> void:
 		return
 	_cam_t += delta / 9.0
 	_place_camera(_cam_t)
-	if _birds and _birds.is_visible_in_tree():
+	if _birds and is_instance_valid(_birds) and _birds.is_visible_in_tree():
 		_birds.position.x = 4.0 + fmod(Time.get_ticks_msec() / 1000.0 * 0.6, 12.0) - 6.0
 	_update_anchors()
 
@@ -209,6 +245,25 @@ func _arg(key: String) -> String:
 		if a.begins_with(key + "="):
 			return a.substr(key.length() + 1)
 	return ""
+
+
+func _has_flag(key: String) -> bool:
+	return OS.get_cmdline_user_args().has(key)
+
+
+## The pre-commit gate: walks every page under plain --headless (no Xvfb, no
+## GPU needed) so a script error, a bad page dictionary or a set that fails to
+## build shows up as SCRIPT ERROR / Parse Error in the log, the same way
+## flipbook-field's drive6.gd gate catches breakage before it ships.
+func _pagecheck() -> void:
+	print("pagecheck: %d pages" % pages.size())
+	for i in pages.size():
+		_show(i, true)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		print("pagecheck: page %d ok (set=%s)" % [i + 1, pages[i]["set"]])
+	print("PAGECHECK COMPLETE %d/%d" % [pages.size(), pages.size()])
+	get_tree().quit()
 
 
 func _render_all(dir: String) -> void:

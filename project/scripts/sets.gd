@@ -15,22 +15,26 @@ static func origin(set_name: String) -> Vector3:
 	return Vector3(ORDER.find(set_name) * SPACING, 0, 0)
 
 
-static func build_all(parent: Node3D) -> Dictionary:
-	var out := {}
-	for s in ORDER:
-		var n := Node3D.new()
-		n.name = s.capitalize().replace(" ", "")
-		n.position = origin(s)
-		parent.add_child(n)
-		match s:
-			"parlour": _parlour(n)
-			"exterior": _exterior(n)
-			"hall": _hall(n)
-			"dining": _dining(n)
-			"gunroom": _gunroom(n)
-			"moor": _moor(n)
-		out[s] = n
-	return out
+## Builds one set and returns its root. Sets are heavy — the hall alone is a
+## couple of hundred mesh instances — so [param parent] (Main) builds them
+## lazily, one or two at a time, rather than calling this for every name up
+## front: six sets resident in GPU memory at once is fine on a desktop or the
+## software rasterizer used for headless testing, but risks the tighter VRAM
+## budget of a phone or older browser, which is the likeliest cause of a
+## WebGL context loss a few pages in.
+static func build_one(s: String, parent: Node3D) -> Node3D:
+	var n := Node3D.new()
+	n.name = s.capitalize().replace(" ", "")
+	n.position = origin(s)
+	parent.add_child(n)
+	match s:
+		"parlour": _parlour(n)
+		"exterior": _exterior(n)
+		"hall": _hall(n)
+		"dining": _dining(n)
+		"gunroom": _gunroom(n)
+		"moor": _moor(n)
+	return n
 
 
 # --- Primitives ------------------------------------------------------------------

@@ -85,11 +85,22 @@ static func _paper(path: String) -> StandardMaterial3D:
 	return m
 
 
-## A flat unlit colour — windows, lamp glass, things that are light rather than lit.
+static var _glow_cache: Dictionary = {}
+
+
+## A flat unlit colour — windows, lamp glass, things that are light rather than
+## lit. Cached by colour: re-applying a lighting preset re-lights the same
+## windows every page turn, and building fresh materials each time is needless
+## churn — cheap on a desktop GPU, but a real cost on the tighter memory
+## budget a web build gets on a phone or an older browser.
 static func glow(color: Color) -> StandardMaterial3D:
+	var key := color.to_html()
+	if _glow_cache.has(key):
+		return _glow_cache[key]
 	var m := StandardMaterial3D.new()
 	m.albedo_color = color
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_glow_cache[key] = m
 	return m
 
 

@@ -49,7 +49,7 @@ func panel_rect() -> Rect2:
 
 
 func _text_size() -> float:
-	return clampf(minf(size.x * 0.022, size.y * 0.036), 15.0, 26.0)
+	return clampf(minf(size.x * 0.088, size.y * 0.144), 60.0, 104.0)
 
 
 func _process(_d: float) -> void:
@@ -64,12 +64,16 @@ func _draw() -> void:
 	var taken: Array[Rect2] = []
 	_last = Rect2()
 
+	var avoid: Array[Rect2] = []
+	var folio_zone := _folio_zone(ts)
+	if folio_zone.size.x > 0.0:
+		avoid.append(folio_zone)
 	if page.has("caption"):
-		taken.append(_caption(page["caption"], true, ts))
+		taken.append(_caption(page["caption"], true, ts, avoid))
 	if page.has("caption2"):
-		taken.append(_caption(page["caption2"], false, ts))
+		taken.append(_caption(page["caption2"], false, ts, avoid))
 	if page.has("title"):
-		taken.append(_title(page["title"]))
+		taken.append(_title(page["title"], taken))
 
 	var said: Array = page.get("say", [])
 	for i in said.size():
@@ -97,60 +101,101 @@ func _frame() -> void:
 	draw_rect(Rect2(0, p.end.y, s.x, s.y - p.end.y), paper)
 	draw_rect(Rect2(0, p.position.y, p.position.x, p.size.y), paper)
 	draw_rect(Rect2(p.end.x, p.position.y, s.x - p.end.x, p.size.y), paper)
-	draw_rect(p, Ink.INK, false, 4.0)
+	draw_rect(p, Ink.INK, false, 5.0)
 
 
-func _folio(ts: float) -> void:
-	var fs := ts * 0.8
+## Where the folio plate will land, so a caption anchored to that same corner
+## can get out of its way instead of printing underneath it.
+func _folio_zone(ts: float) -> Rect2:
+	if folio == "":
+		return Rect2()
 	var p := _panel
-	var y := p.end.y + (size.y - p.end.y) * 0.5 + fs * 0.35
-	if size.y - p.end.y < fs * 1.2:
-		y = p.end.y - 10.0
+	var fs := ts * 0.62
+	var pad := Vector2(16, 10)
+	var sz := f_italic.get_string_size(folio, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+	return Rect2(p.end - sz - pad * 2.0 - Vector2(12, 12), sz + pad * 2.0).grow(8)
+
+
+## The folio and the turn-page hint print on a paper plate inside the bottom
+## corners of the picture itself — the thin outer margin is only ever a few
+## points wide and cannot hold lettering at a readable size.
+func _folio(ts: float) -> void:
+	var p := _panel
+	var fs := ts * 0.62
+	var pad := Vector2(16, 10)
 	if folio != "":
-		var w := f_italic.get_string_size(folio, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		_plate_text(Vector2(p.end.x - w - 12.0, y), folio, f_italic, fs, size.y - p.end.y < fs * 1.2)
+		var sz := f_italic.get_string_size(folio, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+		var box := Rect2(p.end - sz - pad * 2.0 - Vector2(12, 12), sz + pad * 2.0)
+		_plate(box)
+		draw_string(f_italic, box.position + pad + Vector2(0, f_italic.get_ascent(fs)), folio,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Ink.INK)
 	if show_hint:
 		var hint := "tap, click or space to turn the page  ·  ← back"
-		_plate_text(Vector2(p.position.x + 12.0, y), hint, f_italic, fs, size.y - p.end.y < fs * 1.2)
+		var hfs := ts * 0.46
+		var hsz := f_italic.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, hfs)
+		var hbox := Rect2(Vector2(p.position.x + 12.0, p.end.y - hsz.y - pad.y * 2.0 - 12.0), hsz + pad * 2.0)
+		_plate(hbox)
+		draw_string(f_italic, hbox.position + pad + Vector2(0, f_italic.get_ascent(hfs)), hint,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, hfs, Ink.INK)
 
 
-func _plate_text(at: Vector2, t: String, f: Font, fs: float, plate: bool) -> void:
-	if plate:
-		var w := f.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		draw_rect(Rect2(at + Vector2(-6, -fs), Vector2(w + 12, fs * 1.35)), Color(Ink.PAPER, 0.9))
-	draw_string(f, at, t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Ink.INK)
+func _plate(box: Rect2) -> void:
+	draw_rect(box, Color(Ink.PAPER, 0.92))
+	draw_rect(box, Ink.INK, false, 2.0)
 
 
 # --- Captions ------------------------------------------------------------------------
 
-func _caption(t: String, top: bool, ts: float) -> Rect2:
+func _caption(t: String, top: bool, ts: float, avoid: Array[Rect2]) -> Rect2:
 	var p := _panel
-	var maxw := minf(p.size.x * (0.44 if p.size.x > p.size.y else 0.86), 560.0)
-	var pad := Vector2(14, 10)
-	var fs := ts * 0.95
+	var maxw := minf(p.size.x * (0.48 if p.size.x > p.size.y else 0.78), 720.0)
+	var pad := Vector2(22, 16)
+	var fs := ts * 0.62
+	var floor_fs := ts * 0.34
+	var max_h := p.size.y * 0.62
 	var tsz := f_italic.get_multiline_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, maxw - pad.x * 2, fs)
-	var box := Rect2(Vector2.ZERO, tsz + pad * 2)
+	# A long caption at this much bigger size can ask for more height than the
+	# panel has; shrink it rather than let the last line run off the page.
+	while tsz.y + pad.y * 2.0 > max_h and fs > floor_fs:
+		fs = maxf(fs * 0.88, floor_fs)
+		tsz = f_italic.get_multiline_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, maxw - pad.x * 2, fs)
+	var box := Rect2(Vector2.ZERO, tsz + pad * 2 + Vector2(0, fs * 0.3))
 	var inset := 14.0
 	if top:
 		box.position = p.position + Vector2(inset, inset)
 	else:
 		box.position = p.end - box.size - Vector2(inset, inset)
+	# The folio plate always prints last, in the same corner a bottom caption
+	# would naturally sit in — get out of its way rather than let it paint
+	# over the caption's last line.
+	for o in avoid:
+		if box.intersects(o):
+			box.position.y = minf(box.position.y, o.position.y - box.size.y - 10.0)
 	draw_rect(box, CAPTION)
 	draw_rect(box, Ink.INK, false, 2.5)
 	draw_multiline_string(f_italic, box.position + pad + Vector2(0, f_italic.get_ascent(fs)), t,
 		HORIZONTAL_ALIGNMENT_LEFT, maxw - pad.x * 2, fs, -1, Ink.INK)
-	return box.grow(6)
+	return box.grow(26)
 
 
-func _title(t: Array) -> Rect2:
+func _title(t: Array, taken: Array[Rect2]) -> Rect2:
 	var p := _panel
-	var big := clampf(p.size.y * 0.13, 36.0, 110.0)
-	var small := clampf(big * 0.28, 14.0, 26.0)
+	var big := clampf(p.size.y * 0.16, 60.0, 150.0)
+	var small := clampf(big * 0.3, 30.0, 46.0)
 	var tw := f_title.get_string_size(t[0], HORIZONTAL_ALIGNMENT_LEFT, -1, big).x
 	var maxw := minf(p.size.x * 0.8, maxf(tw, 300.0) + 80.0)
 	var sub_sz := f_italic.get_multiline_string_size(t[1], HORIZONTAL_ALIGNMENT_CENTER, maxw - 40.0, small)
 	var h := big * 1.15 + sub_sz.y + 40.0
 	var box := Rect2(Vector2(p.get_center().x - maxw * 0.5, p.position.y + p.size.y * 0.52 - h * 0.5), Vector2(maxw, h))
+	# A caption already on the page claims its own ground; keep the title off
+	# it rather than let the two fight over the same square of panel.
+	for o in taken:
+		if box.intersects(o):
+			if o.get_center().y < p.get_center().y:
+				box.position.y = maxf(box.position.y, o.end.y + 14.0)
+			else:
+				box.position.y = minf(box.position.y, o.position.y - h - 14.0)
+	box.position.y = clampf(box.position.y, p.position.y + 8.0, p.end.y - h - 8.0)
 	draw_rect(box, Color(Ink.PAPER, 0.94))
 	draw_rect(box, Ink.INK, false, 3.0)
 	draw_rect(box.grow(-7), Ink.INK, false, 1.0)
@@ -164,15 +209,10 @@ func _title(t: Array) -> Rect2:
 # --- Balloons ---------------------------------------------------------------------------
 
 func _balloon(who: String, txt: String, kind: String, ts: float, taken: Array[Rect2]) -> Rect2:
-	var t := txt
 	var p := _panel
 	var landscape := p.size.x > p.size.y
-	var maxw := minf(p.size.x * (0.30 if landscape else 0.62), 400.0)
+	var maxw := minf(p.size.x * (0.4 if landscape else 0.68), 600.0)
 	var f := f_bold if kind == "shout" else f_text
-	var fs := ts * (1.08 if kind == "shout" else 1.0)
-	var tsz := f.get_multiline_string_size(t, HORIZONTAL_ALIGNMENT_CENTER, maxw, fs)
-	var pad := Vector2(26, 16) if kind != "shout" else Vector2(34, 24)
-	var bs := tsz + pad * 2.0
 	var has_anchor := anchors.has(who)
 	var a: Vector2 = anchors.get(who, Vector2(p.get_center().x, p.position.y))
 
@@ -180,17 +220,47 @@ func _balloon(who: String, txt: String, kind: String, ts: float, taken: Array[Re
 	var blocked: Array[Rect2] = taken.duplicate()
 	for id in anchors:
 		var h: Vector2 = anchors[id]
-		blocked.append(Rect2(h + Vector2(-48, -10), Vector2(96, 110)))
-	# Try above the head, then either side of it, and take the first spot that
-	# is clear and on the page.
+		blocked.append(Rect2(h + Vector2(-65, -14), Vector2(130, 150)))
+
+	# Try to place at full size, then again a little smaller if the page is too
+	# crowded to fit it cleanly — big lettering makes a crowded panel a real
+	# constraint, and a slightly smaller balloon reads far better than one that
+	# overlaps a caption or another line.
+	var fs := ts * (0.78 if kind == "shout" else 0.70)
+	var pad := Vector2(30, 20) if kind != "shout" else Vector2(40, 28)
+	var floor_fs := ts * 0.42
+	var bs := Vector2.ZERO
+	var found := Rect2(-1, -1, 0, 0)
+	while true:
+		var tsz := f.get_multiline_string_size(txt, HORIZONTAL_ALIGNMENT_CENTER, maxw, fs)
+		bs = tsz + pad * 2.0 + Vector2(0, fs * 0.3)
+		found = _place_balloon(a, bs, blocked)
+		if found.position.x >= 0.0 or fs <= floor_fs:
+			break
+		fs = maxf(fs * 0.85, floor_fs)
+		pad *= 0.9
+	var r := found
+	if r.position.x < 0.0:
+		# Still nothing fully clear: best-effort slide past whatever is on the
+		# page. It never sits on a face, even if it grazes a caption on an
+		# unusually crowded panel.
+		r = _slide_balloon(a, bs, taken)
+	return _draw_balloon(r, a, has_anchor, kind, f, fs, pad, maxw, txt)
+
+
+## Above the head, then either side of it: the first spot that is clear of
+## every caption, prior balloon and face, and keeps reading order. Returns a
+## rect with a negative position when nothing was clear.
+func _place_balloon(a: Vector2, bs: Vector2, blocked: Array[Rect2]) -> Rect2:
+	var p := _panel
 	var inner := p.grow(-10)
 	var tries := [
-		Vector2(a.x - bs.x * 0.5, a.y - bs.y - 46.0),
+		Vector2(a.x - bs.x * 0.5, a.y - bs.y - 60.0),
 		Vector2(a.x - bs.x * 0.5, p.position.y + 10.0),
-		Vector2(a.x + 70.0, a.y - bs.y * 0.6),
-		Vector2(a.x - 70.0 - bs.x, a.y - bs.y * 0.6),
-		Vector2(a.x + 70.0, p.position.y + 10.0),
-		Vector2(a.x - 70.0 - bs.x, p.position.y + 10.0),
+		Vector2(a.x + 100.0, a.y - bs.y * 0.6),
+		Vector2(a.x - 100.0 - bs.x, a.y - bs.y * 0.6),
+		Vector2(a.x + 100.0, p.position.y + 10.0),
+		Vector2(a.x - 100.0 - bs.x, p.position.y + 10.0),
 	]
 	for spot in tries:
 		var c := Rect2(spot, bs)
@@ -206,10 +276,15 @@ func _balloon(who: String, txt: String, kind: String, ts: float, taken: Array[Re
 				clear = false
 				break
 		if clear:
-			return _draw_balloon(c, a, has_anchor, kind, "", f, fs, pad, txt)
-	# Nothing clear: start above the speaker and slide down past what is on the
-	# page. Balloons are read top to bottom, so the order holds.
-	var r := Rect2(Vector2(a.x - bs.x * 0.5, a.y - bs.y - 46.0), bs)
+			return c
+	return Rect2(-1, -1, 0, 0)
+
+
+func _slide_balloon(a: Vector2, bs: Vector2, taken: Array[Rect2]) -> Rect2:
+	var p := _panel
+	# Start above the speaker and slide down past what is on the page.
+	# Balloons are read top to bottom, so the order holds.
+	var r := Rect2(Vector2(a.x - bs.x * 0.5, a.y - bs.y - 60.0), bs)
 	r.position.x = clampf(r.position.x, p.position.x + 10.0, p.end.x - bs.x - 10.0)
 	r.position.y = maxf(r.position.y, p.position.y + 10.0)
 	for _i in 8:
@@ -227,12 +302,11 @@ func _balloon(who: String, txt: String, kind: String, ts: float, taken: Array[Re
 			if r.intersects(o):
 				r.position.x = o.end.x + 8.0 if o.get_center().x < p.get_center().x else o.position.x - bs.x - 8.0
 				r.position.x = clampf(r.position.x, p.position.x + 10.0, p.end.x - bs.x - 10.0)
+	return r
 
-	return _draw_balloon(r, a, has_anchor, kind, "", f, fs, pad, t)
 
-
-func _draw_balloon(r: Rect2, a: Vector2, has_anchor: bool, kind: String, _u: String,
-		f: Font, fs: float, pad: Vector2, t: String) -> Rect2:
+func _draw_balloon(r: Rect2, a: Vector2, has_anchor: bool, kind: String,
+		f: Font, fs: float, pad: Vector2, maxw: float, t: String) -> Rect2:
 	var shape := _jagged(r) if kind == "shout" else _oval(r)
 	var outline := shape
 	if has_anchor and not r.grow(-4).has_point(a):
@@ -244,9 +318,13 @@ func _draw_balloon(r: Rect2, a: Vector2, has_anchor: bool, kind: String, _u: Str
 	var closed := outline.duplicate()
 	closed.append(outline[0])
 	draw_polyline(closed, Ink.INK, 2.5, true)
-	draw_multiline_string(f, r.position + Vector2(pad.x, pad.y + f.get_ascent(fs)), t,
-		HORIZONTAL_ALIGNMENT_CENTER, r.size.x - pad.x * 2.0, fs, -1, Ink.INK)
-	return r.grow(4)
+	# Wrap at the same width the box was measured with (maxw), not the box's
+	# own tighter width — rewrapping a second time at a narrower width than
+	# the measurement used can add a line the box was never sized for, which
+	# is how a balloon's last line ended up printing below its own outline.
+	draw_multiline_string(f, Vector2(r.get_center().x - maxw * 0.5, r.position.y + pad.y + f.get_ascent(fs)), t,
+		HORIZONTAL_ALIGNMENT_CENTER, maxw, fs, -1, Ink.INK)
+	return r.grow(18)
 
 
 ## A lettered balloon: a superellipse, which is rounder than a rounded rect and
@@ -298,7 +376,7 @@ func _tail(r: Rect2, a: Vector2) -> PackedVector2Array:
 
 func _sfx(t: String, at: Vector2, deg: float) -> void:
 	var p := _panel
-	var fs := clampf(p.size.y * 0.1, 30.0, 96.0)
+	var fs := clampf(p.size.y * 0.14, 56.0, 150.0)
 	var pos := p.position + p.size * at
 	var w := f_title.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 	draw_set_transform(pos, deg_to_rad(deg), Vector2.ONE)

@@ -86,3 +86,12 @@ gzips the wasm and js for nginx's `gzip_static`. The Dockerfile serves `web/`
 from nginx; `headers.caddy` adds COOP/COEP, without which a threaded Godot web
 build cannot get SharedArrayBuffer and refuses to start. Deployed on the Precog
 hub as `hunting-lodge`, the same way as flipbook-field.
+
+Run `tools/install-hooks.sh` once after cloning. After that, every commit
+touching `project/` or `build.sh` rebuilds `web/` and walks all 28 pages under
+plain `--headless` (`--pagecheck`, no Xvfb needed — it catches a script error
+or a bad page dictionary the same way the screenshot gate does, just without
+needing a GPU), stages the rebuilt `web/`, and — on `main`, on a machine with
+`/opt/scripts/deploy.sh` — pushes and redeploys in the background after the
+commit lands. `SKIP_BUILD=1 git commit ...` skips the build; `SKIP_DEPLOY=1`
+skips the push-and-deploy.
