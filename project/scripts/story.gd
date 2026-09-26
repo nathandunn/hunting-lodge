@@ -314,7 +314,6 @@ static func pages() -> Array:
 			"aubrey":    {"at": Vector3(0.5, 0, 0.0), "yaw": 10, "pose": "carry", "costume": "legal"},
 		},
 		"say": [
-			["charlotte", "The 4.15 to Paddington?"],
 			["aubrey", "The 4.15 to Paddington."],
 		],
 		"caption2": "They left without packing. They left, it is recorded, without their guns, though Charlotte looked back twice.",
