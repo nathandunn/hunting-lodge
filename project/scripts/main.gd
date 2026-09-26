@@ -43,6 +43,9 @@ func _ready() -> void:
 	world.name = "Sets"
 	add_child(world)
 
+	_fit_render_scale()
+	get_viewport().size_changed.connect(_fit_render_scale)
+
 	var skins := Ink.SKINS
 	var i := 0
 	for id in Story.CAST:
@@ -71,7 +74,25 @@ func _ready() -> void:
 	if _has_flag("--pagecheck"):
 		_pagecheck()
 		return
+	if _has_flag("--memcheck"):
+		_memcheck()
+		return
 	_show(0, true)
+
+
+## The 3D picture is rendered at no more than RENDER_BUDGET pixels and scaled
+## up; the lettering is 2D and stays at full resolution, so type is always
+## crisp. On a Retina laptop the window is 6-7 megapixels, and every 3D render
+## buffer (colour, depth, multisample, shadows' resolve) grows with it — that,
+## not our scene, is what used up the browser's GPU budget and cost it the
+## WebGL context a few pages in. Ink-and-paper art loses nothing at this size.
+const RENDER_BUDGET := 2_000_000.0
+
+
+func _fit_render_scale() -> void:
+	var px := Vector2(DisplayServer.window_get_size())
+	var scale := clampf(sqrt(RENDER_BUDGET / maxf(px.x * px.y, 1.0)), 0.4, 1.0)
+	get_viewport().scaling_3d_scale = scale
 
 
 ## Returns the built root for [param name], building it on first use.
@@ -174,6 +195,9 @@ func _show(i: int, instant: bool) -> void:
 	letters.page = pg
 	letters.folio = "%d / %d" % [i + 1, pages.size()]
 	letters.show_hint = i == 0
+	# Heads first, then lettering: the page is laid out once, on its first
+	# frame, around wherever the faces are now.
+	_update_anchors()
 
 
 func _place_camera(t: float) -> void:
@@ -263,6 +287,33 @@ func _pagecheck() -> void:
 		await get_tree().process_frame
 		print("pagecheck: page %d ok (set=%s)" % [i + 1, pages[i]["set"]])
 	print("PAGECHECK COMPLETE %d/%d" % [pages.size(), pages.size()])
+	get_tree().quit()
+
+
+## Reads the book forward, back and forward again, printing video and texture
+## memory after each page. Run it under Xvfb with the opengl3 driver (the
+## renderer a browser gets) — a number that climbs with every page turn is the
+## leak that eventually costs a browser its WebGL context.
+func _memcheck() -> void:
+	var order: Array = []
+	for i in pages.size():
+		order.append(i)
+	for i in range(pages.size() - 2, -1, -1):
+		order.append(i)
+	for i in pages.size():
+		order.append(i)
+	var limit := int(_arg("--memsteps")) if _arg("--memsteps") != "" else order.size()
+	var step := 0
+	for i in order.slice(0, limit):
+		_show(i, true)
+		for _f in 20:
+			await get_tree().process_frame
+		step += 1
+		print("MEM %dx%d s3d %.2f step %03d page %02d video %7.1f MB  texture %7.1f MB  objects %d" % [
+			DisplayServer.window_get_size().x, DisplayServer.window_get_size().y, get_viewport().scaling_3d_scale, step, i + 1,
+			Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0,
+			Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / 1048576.0,
+			Performance.get_monitor(Performance.OBJECT_COUNT)])
 	get_tree().quit()
 
 

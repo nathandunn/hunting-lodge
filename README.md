@@ -69,6 +69,26 @@ stag for a door-knocker), the great hall (twenty-odd heads, two fish, a bear),
 the dining room, the gun-room, and the moor (heather, a grouse butt, a copse, a
 shot cloud). Each sits at its own spot along X; only the current one is shown.
 
+## GPU memory
+
+A browser gives a page a fixed GPU budget and drops the WebGL context when it's
+spent. Two things keep Bludleigh well inside it:
+
+- The 3D picture renders at no more than ~2 megapixels (`RENDER_BUDGET` in
+  `main.gd`) and is scaled up; lettering stays at full resolution. MSAA is 2x.
+  On a Retina laptop this took the starting footprint from ~220 MB to ~105 MB.
+- Only the current set and the previous one are built at a time, and lettering
+  sizes come off a short ladder (`Lettering.SIZES`), since every size a font
+  draws is its own glyph atlas.
+
+```
+xvfb-run -a -s "-screen 0 3024x1890x24" godot4 --display-driver x11 \
+  --rendering-driver opengl3 --resolution 3024x1890 --path project -- --memcheck
+```
+
+reads the book forward, back and forward again at Retina size, printing video
+memory after every page. It should level off after the first pass, not climb.
+
 ## Checking the pages
 
 ```

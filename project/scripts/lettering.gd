@@ -16,7 +16,10 @@ var f_italic: Font
 var f_bold: Font
 var f_title: Font
 
-var page: Dictionary = {}
+var page: Dictionary = {}:
+	set(v):
+		page = v
+		_layout = {}
 ## who -> Vector2 screen point just above the head, or absent when off-screen.
 var anchors: Dictionary = {}
 var folio: String = ""
@@ -26,6 +29,12 @@ var wipe: float = 0.0
 
 var _panel: Rect2
 var _last: Rect2
+## Where every box on the current page sits and at what size, worked out once
+## when the page opens and then held: only the balloon tails follow the heads
+## as the camera creeps. Laying out afresh every frame let a balloon hop
+## between two spots, or two sizes, as a head drifted across a threshold.
+var _layout: Dictionary = {}
+var _layout_size: Vector2
 
 
 func _ready() -> void:
@@ -35,6 +44,10 @@ func _ready() -> void:
 	f_italic = load("res://fonts/CrimsonPro-Italic.ttf")
 	f_bold = load("res://fonts/CrimsonPro-Bold.ttf")
 	f_title = load("res://fonts/Gloock-Regular.ttf")
+	# Each face keeps a glyph atlas per size it has drawn, so sizes are whole
+	# pixels and a page is fitted once, not every frame. (Distance-field fonts
+	# would share one atlas across sizes, but Crimson Pro's overlapping contours
+	# print white specks inside the letters that way.)
 
 
 ## The picture's rectangle in screen space — the director fits the camera to it.
@@ -46,6 +59,19 @@ func panel_rect() -> Rect2:
 		var bar := s.y * 0.08
 		r = r.grow_individual(0, -bar, 0, -bar)
 	return r
+
+
+## Every size the lettering uses comes off this ladder, so the fonts only ever
+## rasterise a handful of sizes (each one is its own glyph atlas in GPU memory).
+const SIZES := [22.0, 26.0, 30.0, 34.0, 40.0, 46.0, 52.0, 60.0, 68.0, 78.0, 90.0, 104.0, 120.0, 140.0]
+
+
+static func _snap(fs: float) -> float:
+	var best: float = SIZES[0]
+	for v in SIZES:
+		if v <= fs + 0.5:
+			best = v
+	return best
 
 
 func _text_size() -> float:
@@ -61,6 +87,9 @@ func _draw() -> void:
 		return
 	_panel = panel_rect()
 	var ts := _text_size()
+	if _layout_size != size:
+		_layout = {}
+		_layout_size = size
 	var taken: Array[Rect2] = []
 	_last = Rect2()
 
@@ -79,11 +108,15 @@ func _draw() -> void:
 	for i in said.size():
 		var line: Array = said[i]
 		var kind: String = line[2] if line.size() > 2 else "speech"
-		_last = _balloon(line[0], line[1], kind, ts, taken)
+		_last = _balloon(i, line[0], line[1], kind, ts, taken)
 		taken.append(_last)
 
-	for s in page.get("sfx", []):
-		_sfx(s[0], s[1], s[2])
+	# Sound effects last, each nudged to the nearest spot clear of the words.
+	var fx_taken: Array[Rect2] = taken + avoid
+	for i in page.get("sfx", []).size():
+		var fx: Array = page["sfx"][i]
+		_sfx(i, fx[0], fx[1], fx[2], fx_taken)
+
 
 	_frame()
 	_folio(ts)
@@ -110,7 +143,7 @@ func _folio_zone(ts: float) -> Rect2:
 	if folio == "":
 		return Rect2()
 	var p := _panel
-	var fs := ts * 0.62
+	var fs := _snap(ts * 0.62)
 	var pad := Vector2(16, 10)
 	var sz := f_italic.get_string_size(folio, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
 	return Rect2(p.end - sz - pad * 2.0 - Vector2(12, 12), sz + pad * 2.0).grow(8)
@@ -121,7 +154,7 @@ func _folio_zone(ts: float) -> Rect2:
 ## points wide and cannot hold lettering at a readable size.
 func _folio(ts: float) -> void:
 	var p := _panel
-	var fs := ts * 0.62
+	var fs := _snap(ts * 0.62)
 	var pad := Vector2(16, 10)
 	if folio != "":
 		var sz := f_italic.get_string_size(folio, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
@@ -131,7 +164,7 @@ func _folio(ts: float) -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Ink.INK)
 	if show_hint:
 		var hint := "tap, click or space to turn the page  ·  ← back"
-		var hfs := ts * 0.46
+		var hfs := _snap(ts * 0.46)
 		var hsz := f_italic.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, hfs)
 		var hbox := Rect2(Vector2(p.position.x + 12.0, p.end.y - hsz.y - pad.y * 2.0 - 12.0), hsz + pad * 2.0)
 		_plate(hbox)
@@ -150,14 +183,32 @@ func _caption(t: String, top: bool, ts: float, avoid: Array[Rect2]) -> Rect2:
 	var p := _panel
 	var maxw := minf(p.size.x * (0.48 if p.size.x > p.size.y else 0.78), 720.0)
 	var pad := Vector2(22, 16)
-	var fs := ts * 0.62
-	var floor_fs := ts * 0.34
+	var fs := 0.0
+	var key := "caption_%s" % top
+	var box: Rect2
+	if _layout.has(key):
+		box = _layout[key][0]
+		fs = _layout[key][1]
+	else:
+		box = _fit_caption(t, top, ts, avoid, maxw, pad)
+		fs = _layout[key][1] if _layout.has(key) else fs
+	draw_rect(box, CAPTION)
+	draw_rect(box, Ink.INK, false, 2.5)
+	draw_multiline_string(f_italic, box.position + pad + Vector2(0, f_italic.get_ascent(fs)), t,
+		HORIZONTAL_ALIGNMENT_LEFT, maxw - pad.x * 2, fs, -1, Ink.INK)
+	return box.grow(26)
+
+
+func _fit_caption(t: String, top: bool, ts: float, avoid: Array[Rect2], maxw: float, pad: Vector2) -> Rect2:
+	var p := _panel
+	var fs := _snap(ts * 0.62)
+	var floor_fs := _snap(ts * 0.34)
 	var max_h := p.size.y * 0.62
 	var tsz := f_italic.get_multiline_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, maxw - pad.x * 2, fs)
 	# A long caption at this much bigger size can ask for more height than the
 	# panel has; shrink it rather than let the last line run off the page.
 	while tsz.y + pad.y * 2.0 > max_h and fs > floor_fs:
-		fs = maxf(fs * 0.88, floor_fs)
+		fs = _snap(maxf(fs - 1.0, floor_fs))
 		tsz = f_italic.get_multiline_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, maxw - pad.x * 2, fs)
 	var box := Rect2(Vector2.ZERO, tsz + pad * 2 + Vector2(0, fs * 0.3))
 	var inset := 14.0
@@ -171,17 +222,14 @@ func _caption(t: String, top: bool, ts: float, avoid: Array[Rect2]) -> Rect2:
 	for o in avoid:
 		if box.intersects(o):
 			box.position.y = minf(box.position.y, o.position.y - box.size.y - 10.0)
-	draw_rect(box, CAPTION)
-	draw_rect(box, Ink.INK, false, 2.5)
-	draw_multiline_string(f_italic, box.position + pad + Vector2(0, f_italic.get_ascent(fs)), t,
-		HORIZONTAL_ALIGNMENT_LEFT, maxw - pad.x * 2, fs, -1, Ink.INK)
-	return box.grow(26)
+	_layout["caption_%s" % top] = [box, fs]
+	return box
 
 
 func _title(t: Array, taken: Array[Rect2]) -> Rect2:
 	var p := _panel
-	var big := clampf(p.size.y * 0.16, 60.0, 150.0)
-	var small := clampf(big * 0.3, 30.0, 46.0)
+	var big := _snap(clampf(p.size.y * 0.16, 60.0, 150.0))
+	var small := _snap(clampf(big * 0.3, 30.0, 46.0))
 	var tw := f_title.get_string_size(t[0], HORIZONTAL_ALIGNMENT_LEFT, -1, big).x
 	var maxw := minf(p.size.x * 0.8, maxf(tw, 300.0) + 80.0)
 	var sub_sz := f_italic.get_multiline_string_size(t[1], HORIZONTAL_ALIGNMENT_CENTER, maxw - 40.0, small)
@@ -196,6 +244,10 @@ func _title(t: Array, taken: Array[Rect2]) -> Rect2:
 			else:
 				box.position.y = minf(box.position.y, o.position.y - h - 14.0)
 	box.position.y = clampf(box.position.y, p.position.y + 8.0, p.end.y - h - 8.0)
+	if _layout.has("title"):
+		box = _layout["title"]
+	else:
+		_layout["title"] = box
 	draw_rect(box, Color(Ink.PAPER, 0.94))
 	draw_rect(box, Ink.INK, false, 3.0)
 	draw_rect(box.grow(-7), Ink.INK, false, 1.0)
@@ -208,13 +260,17 @@ func _title(t: Array, taken: Array[Rect2]) -> Rect2:
 
 # --- Balloons ---------------------------------------------------------------------------
 
-func _balloon(who: String, txt: String, kind: String, ts: float, taken: Array[Rect2]) -> Rect2:
+func _balloon(index: int, who: String, txt: String, kind: String, ts: float, taken: Array[Rect2]) -> Rect2:
 	var p := _panel
 	var landscape := p.size.x > p.size.y
 	var maxw := minf(p.size.x * (0.4 if landscape else 0.68), 600.0)
 	var f := f_bold if kind == "shout" else f_text
 	var has_anchor := anchors.has(who)
 	var a: Vector2 = anchors.get(who, Vector2(p.get_center().x, p.position.y))
+	var key := "balloon_%d" % index
+	if _layout.has(key):
+		var m: Array = _layout[key]
+		return _draw_balloon(m[0], a, has_anchor, kind, f, m[1], m[2], maxw, txt)
 
 	# Heads are sacred: a balloon may not sit on anybody's face.
 	var blocked: Array[Rect2] = taken.duplicate()
@@ -226,9 +282,9 @@ func _balloon(who: String, txt: String, kind: String, ts: float, taken: Array[Re
 	# crowded to fit it cleanly — big lettering makes a crowded panel a real
 	# constraint, and a slightly smaller balloon reads far better than one that
 	# overlaps a caption or another line.
-	var fs := ts * (0.78 if kind == "shout" else 0.70)
+	var fs := _snap(ts * (0.78 if kind == "shout" else 0.70))
 	var pad := Vector2(30, 20) if kind != "shout" else Vector2(40, 28)
-	var floor_fs := ts * 0.42
+	var floor_fs := _snap(ts * 0.42)
 	var bs := Vector2.ZERO
 	var found := Rect2(-1, -1, 0, 0)
 	while true:
@@ -237,7 +293,7 @@ func _balloon(who: String, txt: String, kind: String, ts: float, taken: Array[Re
 		found = _place_balloon(a, bs, blocked)
 		if found.position.x >= 0.0 or fs <= floor_fs:
 			break
-		fs = maxf(fs * 0.85, floor_fs)
+		fs = _snap(maxf(fs - 1.0, floor_fs))
 		pad *= 0.9
 	var r := found
 	if r.position.x < 0.0:
@@ -245,6 +301,7 @@ func _balloon(who: String, txt: String, kind: String, ts: float, taken: Array[Re
 		# page. It never sits on a face, even if it grazes a caption on an
 		# unusually crowded panel.
 		r = _slide_balloon(a, bs, taken)
+	_layout[key] = [r, fs, pad]
 	return _draw_balloon(r, a, has_anchor, kind, f, fs, pad, maxw, txt)
 
 
@@ -327,6 +384,31 @@ func _draw_balloon(r: Rect2, a: Vector2, has_anchor: bool, kind: String,
 	return r.grow(18)
 
 
+## The first spot near [param want] where a box of [param sz] centred there
+## clears everything in [param taken]: up first, then sideways, then down.
+func _clear_spot(want: Vector2, sz: Vector2, taken: Array[Rect2]) -> Vector2:
+	var inner := _panel.grow(-12)
+	var steps: Array[Vector2] = [Vector2.ZERO]
+	for k in range(1, 9):
+		steps.append(Vector2(0, -sz.y * 0.5 * k))
+		steps.append(Vector2(-sz.x * 0.35 * k, 0))
+		steps.append(Vector2(sz.x * 0.35 * k, 0))
+		steps.append(Vector2(0, sz.y * 0.5 * k))
+	for d in steps:
+		var c := want + d
+		var r := Rect2(c - sz * 0.5, sz)
+		if not inner.encloses(r):
+			continue
+		var clear := true
+		for o in taken:
+			if r.intersects(o):
+				clear = false
+				break
+		if clear:
+			return c
+	return want
+
+
 ## A lettered balloon: a superellipse, which is rounder than a rounded rect and
 ## squarer than an ellipse, like the ones drawn with a template.
 func _oval(r: Rect2) -> PackedVector2Array:
@@ -374,11 +456,19 @@ func _tail(r: Rect2, a: Vector2) -> PackedVector2Array:
 
 # --- Sound effects ---------------------------------------------------------------------
 
-func _sfx(t: String, at: Vector2, deg: float) -> void:
+func _sfx(index: int, t: String, at: Vector2, deg: float, taken: Array[Rect2]) -> void:
 	var p := _panel
-	var fs := clampf(p.size.y * 0.14, 56.0, 150.0)
-	var pos := p.position + p.size * at
+	var fs := _snap(clampf(p.size.y * 0.14, 56.0, 150.0))
 	var w := f_title.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var key := "sfx_%d" % index
+	var pos: Vector2
+	if _layout.has(key):
+		pos = _layout[key]
+	else:
+		pos = _clear_spot(p.position + p.size * at, Vector2(w, fs) * 1.1, taken)
+		_layout[key] = pos
+	# Claim the ground, so the next effect on the page lands somewhere else.
+	taken.append(Rect2(pos - Vector2(w, fs) * 0.55, Vector2(w, fs) * 1.1))
 	draw_set_transform(pos, deg_to_rad(deg), Vector2.ONE)
 	draw_string_outline(f_title, Vector2(-w * 0.5, fs * 0.35), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 10, Ink.INK)
 	draw_string(f_title, Vector2(-w * 0.5, fs * 0.35), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, SFX_FILL)
