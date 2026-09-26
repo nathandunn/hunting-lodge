@@ -29,9 +29,12 @@ way, in what pose, wearing and holding what — and the lettering: narrator's
 captions, speech balloons in reading order, sound effects. Pages are
 self-contained, so paging backwards costs the same as forwards.
 
-`scripts/main.gd` turns pages: wipe to paper, place the cast, ease the light,
-frame the shot, letter it, wipe back. While a page is open the camera creeps a
-few per cent toward its subject, so a still panel is never quite still.
+`scripts/main.gd` turns pages: place the cast, light, frame the shot, letter
+it. Every page is a still, like a printed panel: nothing moves once it is up,
+and the engine runs in low-processor mode so a still page isn't redrawn sixty
+times a second. On a page with dialogue the camera rises (same angle) until the
+speakers' heads sit below mid-panel, leaving headroom for the balloons — more
+lines, more headroom.
 
 ## The transformation
 
@@ -46,17 +49,21 @@ drawings throughout. What changes is everything around them:
   the legal waistcoat and bow tie make a poet, the marketing turtleneck and
   scarf make a lady of letters, and the engineer's plaid, re-dyed, makes
   shooting tweeds. The lovers leave in their own clothes.
-- **Hands.** Poses are targets the paper doll eases toward in six drawn
-  in-betweens: clasped hands on arrival, a gun carried in the gun-room, arms up
+- **Hands.** Each page poses the paper doll: clasped hands on arrival, a gun carried in the gun-room, arms up
   on the moor, heads bowed on the steps.
 
 ## Lettering
 
 `scripts/lettering.gd` draws everything printed on the page: the ink border and
 paper margin (letterboxed on wide establishing shots), caption boxes, balloons
-whose tails find the speaker's head every frame, jagged balloons for shouting,
-sound effects, title plates and the folio. Balloons try above the speaker, then
-beside, and will not sit on anybody's face or break reading order.
+with tails to the speaker's head, jagged balloons for shouting, sound effects,
+title plates and the folio. Each page is laid out once. Balloons go in comic
+reading order — each one clearly below the one before it, or on the same row to
+its right — and are placed by searching the whole panel for the clear spot
+nearest the speaker: never on a face (the face cards' real on-screen extent),
+a caption, another balloon or the folio. Early lines on a busy page are pulled
+to the top so the replies have room. The `--shots` render prints a `LAYOUT`
+line for any page that breaks those rules.
 
 Type: Crimson Pro for the lettering, Gloock for titles and sound effects (both
 SIL OFL, licences in `project/fonts/`).

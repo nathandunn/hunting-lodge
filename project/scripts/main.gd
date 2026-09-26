@@ -2,8 +2,8 @@
 ##
 ## Owns the sets, the cast (one Figure each, moved from set to set), the
 ## camera, the light and the lettering. A page from Story.pages() says where
-## everything goes; turning to it is: wipe to paper, place, light, frame,
-## letter, wipe back.
+## everything goes; turning to it is: place, light, frame, letter. Every page
+## is a still, like a panel in a printed book — nothing moves once it's up.
 ##
 ## Controls: click, tap, Space, Enter or → for the next page; ← or Backspace
 ## for the previous; Home to start again.
@@ -28,9 +28,7 @@ var _cam_from: Vector3
 var _cam_to: Vector3
 var _cam_look: Vector3
 var _cam_t: float = 0.0
-var _drift: float = 0.03
 var _turning: bool = false
-var _birds: Node3D
 var _visited: int = 0
 var _prev_set: String = ""
 
@@ -45,6 +43,10 @@ func _ready() -> void:
 
 	_fit_render_scale()
 	get_viewport().size_changed.connect(_fit_render_scale)
+	# Stills: when the window changes shape, reframe and re-letter the page.
+	get_viewport().size_changed.connect(func() -> void:
+		if index >= 0:
+			_show(index))
 
 	var skins := Ink.SKINS
 	var i := 0
@@ -54,6 +56,8 @@ func _ready() -> void:
 		f.name = id
 		f.visible = false
 		add_child(f)
+		# Every page is a still: no breathing, no gesturing, no easing between poses.
+		f.set_process(false)
 		cast[id] = f
 		i += 1
 
@@ -101,8 +105,6 @@ func _ensure_set(name: String) -> Node3D:
 		return sets[name]
 	var root := Sets.build_one(name, world)
 	sets[name] = root
-	if name == "moor":
-		_birds = root.get_meta("birds", null)
 	return root
 
 
@@ -117,8 +119,6 @@ func _prune_sets(current: String) -> void:
 		if not keep.has(s):
 			var n: Node3D = sets[s]
 			sets.erase(s)
-			if s == "moor":
-				_birds = null
 			n.queue_free()
 	_prev_set = current
 
@@ -139,17 +139,12 @@ func _turn(to: int) -> void:
 	if _turning:
 		return
 	_turning = true
-	var tw := create_tween()
-	tw.tween_property(letters, "wipe", 1.0, 0.12)
-	await tw.finished
-	_show(to, false)
-	var back := create_tween()
-	back.tween_property(letters, "wipe", 0.0, 0.2)
-	await back.finished
+	# A page turn is a cut, like a page of a book: no wipe, no easing.
+	_show(to, true)
 	_turning = false
 
 
-func _show(i: int, instant: bool) -> void:
+func _show(i: int, _instant: bool = true) -> void:
 	index = i
 	_visited = maxi(_visited, i)
 	var pg: Dictionary = pages[i]
@@ -160,7 +155,7 @@ func _show(i: int, instant: bool) -> void:
 		sets[s].visible = s == set_name
 	_prune_sets(set_name)
 	var windows: Array = root.get_meta("windows", []) if set_name == "exterior" else []
-	lighting.apply(pg.get("light", "golden"), origin, windows, instant)
+	lighting.apply(pg.get("light", "golden"), origin, windows, true)
 
 	var who: Dictionary = pg.get("cast", {})
 	var speaking := {}
@@ -180,24 +175,69 @@ func _show(i: int, instant: bool) -> void:
 		f.set_seated(c.get("seated", false))
 		f.give_gun(c.get("gun", false))
 		f.give_hat(c.get("hat", false), c.get("holed", false))
-		f.set_pose(c.get("pose", "stand"), instant)
+		f.set_pose(c.get("pose", "stand"), true)
 		f.talking = speaking.has(id)
 
 	var cam: Array = pg["cam"]
 	_cam_from = origin + cam[0]
 	_cam_look = origin + cam[1]
-	_drift = pg.get("drift", 0.03)
-	_cam_to = _cam_from.lerp(_cam_look, _drift)
+	# The camera stands where the page puts it and stays there.
+	_cam_to = _cam_from
 	_cam_t = 0.0
 	camera.fov = pg.get("fov", 42.0)
 	_place_camera(0.0)
-
 	letters.page = pg
+	_make_headroom(pg)
+
 	letters.folio = "%d / %d" % [i + 1, pages.size()]
 	letters.show_hint = i == 0
 	# Heads first, then lettering: the page is laid out once, on its first
 	# frame, around wherever the faces are now.
 	_update_anchors()
+
+
+## Comics leave room at the top of a panel for the words. With the lettering
+## this big, a shot framed with the speakers' heads near the top has nowhere
+## to put a balloon but over someone's face or below the heads, out of reading
+## order. So on a page with dialogue the camera rises — straight up, same
+## angle — until the highest speaking head sits a little below mid-panel.
+const HEADROOM := 0.46
+const MAX_RISE := 1.4
+
+
+func _make_headroom(pg: Dictionary) -> void:
+	var said: Array = pg.get("say", [])
+	if said.is_empty():
+		return
+	var panel := letters.panel_rect()
+	# More lines of dialogue, more sky above the heads.
+	var room := minf(HEADROOM + 0.08 * maxf(said.size() - 2, 0), 0.62)
+	var want := panel.position.y + panel.size.y * room
+	var risen := 0.0
+	for _iter in 6:
+		var top := INF
+		var depth := 0.0
+		for line in said:
+			var f: Figure = cast.get(line[0])
+			if f == null or not f.visible:
+				continue
+			var h := f.head_top()
+			if camera.is_position_behind(h):
+				continue
+			var y := camera.unproject_position(h).y
+			if y < top:
+				top = y
+				depth = -(camera.global_transform.affine_inverse() * h).z
+		if top == INF or top >= want - 2.0 or risen >= MAX_RISE:
+			return
+		# World units per screen pixel at the speaker's depth (fov is vertical).
+		var per_px := 2.0 * depth * tan(deg_to_rad(camera.fov) * 0.5) / get_viewport().get_visible_rect().size.y
+		var rise := minf((want - top) * per_px, MAX_RISE - risen)
+		risen += rise
+		_cam_from.y += rise
+		_cam_look.y += rise
+		_cam_to = _cam_from
+		_place_camera(0.0)
 
 
 func _place_camera(t: float) -> void:
@@ -208,18 +248,11 @@ func _place_camera(t: float) -> void:
 		camera.look_at(_cam_look, Vector3.UP)
 
 
-func _process(delta: float) -> void:
-	if index < 0:
-		return
-	_cam_t += delta / 9.0
-	_place_camera(_cam_t)
-	if _birds and is_instance_valid(_birds) and _birds.is_visible_in_tree():
-		_birds.position.x = 4.0 + fmod(Time.get_ticks_msec() / 1000.0 * 0.6, 12.0) - 6.0
-	_update_anchors()
 
 
 func _update_anchors() -> void:
 	var a := {}
+	var faces := {}
 	var vp := get_viewport().get_visible_rect()
 	for id in cast:
 		var f: Figure = cast[id]
@@ -231,6 +264,21 @@ func _update_anchors() -> void:
 		var s := camera.unproject_position(p)
 		if vp.grow(-8).has_point(s):
 			a[id] = s
+		# Where the face card lands on screen, however near or far the camera.
+		var fr := Rect2()
+		var first := true
+		for q in f.face_corners():
+			if camera.is_position_behind(q):
+				continue
+			var sq := camera.unproject_position(q)
+			if first:
+				fr = Rect2(sq, Vector2.ZERO)
+				first = false
+			else:
+				fr = fr.expand(sq)
+		if not first and fr.intersects(vp):
+			faces[id] = fr.grow(8)
+	letters.faces = faces
 	letters.anchors = a
 
 
@@ -329,4 +377,6 @@ func _render_all(dir: String) -> void:
 		var img := get_viewport().get_texture().get_image()
 		img.save_png("%s/page_%02d.png" % [dir, i + 1])
 		print("shot page %d" % (i + 1))
+		for problem in letters.audit():
+			print("LAYOUT page %d: %s" % [i + 1, problem])
 	get_tree().quit()

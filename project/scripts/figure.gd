@@ -290,5 +290,15 @@ func mouth_point() -> Vector3:
 	return head_pivot.global_transform * Vector3(0, HEAD.y * 0.55, 0)
 
 
+## The drawn face card's corners in world space, for keeping lettering off it.
+func face_corners() -> Array[Vector3]:
+	var c: Array[Vector3] = []
+	var mid := Vector3(0, HEAD.y * 0.46, 0)
+	for dx in [-0.5, 0.5]:
+		for dy in [-0.5, 0.5]:
+			c.append(head_pivot.global_transform * (mid + Vector3(dx * CARD, dy * CARD, 0)))
+	return c
+
+
 func head_top() -> Vector3:
 	return head_pivot.global_transform * Vector3(0, HEAD.y * 1.25, 0)

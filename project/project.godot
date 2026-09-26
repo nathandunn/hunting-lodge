@@ -11,6 +11,9 @@ run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.4", "Forward Plus")
 boot_splash/bg_color=Color(0.937, 0.906, 0.839, 1)
 boot_splash/show_image=false
+; Every page is a still: only render when something changes (a page turn, a
+; resize), not sixty times a second.
+run/low_processor_mode=true
 
 [display]
 
