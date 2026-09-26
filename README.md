@@ -83,9 +83,16 @@ is the one the browser uses, and quits.
 
 `./build.sh` re-exports `web/` (Godot 4.4.1 plus web export templates) and
 gzips the wasm and js for nginx's `gzip_static`. The Dockerfile serves `web/`
-from nginx; `headers.caddy` adds COOP/COEP, without which a threaded Godot web
-build cannot get SharedArrayBuffer and refuses to start. Deployed on the Precog
-hub as `hunting-lodge`, the same way as flipbook-field.
+from nginx. Deployed on the Precog hub as `hunting-lodge`, the same way as
+flipbook-field.
+
+The export is built **without thread support** (`variant/thread_support=false`
+in `export_presets.cfg`): Godot 4's threaded web export needs SharedArrayBuffer,
+which is a documented upstream problem on macOS/iOS browsers (Chrome on macOS
+routes WebGL through ANGLE's Metal backend) — the `WebGL context lost, please
+reload` a reader ran into a few pages in was this, not our scene. `headers.caddy`
+still sends COOP/COEP; they're harmless with a non-threaded build and cost
+nothing to leave in.
 
 Run `tools/install-hooks.sh` once after cloning. After that, every commit
 touching `project/` or `build.sh` rebuilds `web/` and walks all 28 pages under
