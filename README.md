@@ -16,7 +16,14 @@ Aubrey the spiky hair and sunglasses.
 
 ## Read it
 
-Open `project/` in Godot 4.4 and press F5, or visit the deployed build.
+Visit the deployed book, or open `project/` in Godot 4.4 and press F5.
+
+What is deployed is not the engine. Every page is a still, so `build.sh` renders
+the book once, at 2560x1440 with 4x MSAA, to `web/pages/page_NN.webp` (~250 KB
+a page, ~8 MB the lot), and `reader/index.html` turns them: no WebGL, no wasm,
+nothing for a browser to lose. Godot 4's web export lost its WebGL context in
+Safari a few pages in however small the scene was made; a folder of pictures
+cannot.
 
 Click, tap, Space, Enter or → to turn the page; ← (or tapping the left fifth of
 the page) goes back; Home starts again. Twenty-eight pages.
@@ -76,56 +83,40 @@ stag for a door-knocker), the great hall (twenty-odd heads, two fish, a bear),
 the dining room, the gun-room, and the moor (heather, a grouse butt, a copse, a
 shot cloud). Each sits at its own spot along X; only the current one is shown.
 
-## GPU memory
+## Running the engine in a browser
 
-A browser gives a page a fixed GPU budget and drops the WebGL context when it's
-spent. Two things keep Bludleigh well inside it:
-
-- The 3D picture renders at no more than ~2 megapixels (`RENDER_BUDGET` in
-  `main.gd`) and is scaled up; lettering stays at full resolution. MSAA is 2x.
-  On a Retina laptop this took the starting footprint from ~220 MB to ~105 MB.
-- Only the current set and the previous one are built at a time, and lettering
-  sizes come off a short ladder (`Lettering.SIZES`), since every size a font
-  draws is its own glyph atlas.
-
-```
-xvfb-run -a -s "-screen 0 3024x1890x24" godot4 --display-driver x11 \
-  --rendering-driver opengl3 --resolution 3024x1890 --path project -- --memcheck
-```
-
-reads the book forward, back and forward again at Retina size, printing video
-memory after every page. It should level off after the first pass, not climb.
+Not done any more (see above), but the project still runs in Godot and, if
+exported, keeps a browser's GPU budget in mind: the 3D picture renders at no
+more than ~2 megapixels (`RENDER_BUDGET` in `main.gd`), MSAA is 2x, only the
+current set and the previous one are built at a time, and lettering sizes come
+off a short ladder (`Lettering.SIZES`). `--memcheck` (under Xvfb, opengl3)
+reads the book forward, back and forward again printing video memory after
+every page. The Web export preset is non-threaded, which Safari needs.
 
 ## Checking the pages
 
 ```
 xvfb-run -a godot4 --display-driver x11 --rendering-driver opengl3 \
-  --path project -- --shots=/tmp/shots [--page=N]
+  --path project -- --shots=/tmp/shots [--page=N] [--webp=90]
 ```
 
-renders every page (or page N) to PNG under the Compatibility renderer, which
-is the one the browser uses, and quits.
+renders every page (or page N), prints a `LAYOUT` line for any balloon out of
+reading order or over a face, caption or another balloon, and quits.
+`--pagecheck` walks every page under plain `--headless` (no display needed)
+and catches script errors.
 
 ## Build and deploy
 
-`./build.sh` re-exports `web/` (Godot 4.4.1 plus web export templates) and
-gzips the wasm and js for nginx's `gzip_static`. The Dockerfile serves `web/`
+`./build.sh` prints the book: it renders every page to `web/pages/` (needs
+`xvfb-run` and Mesa — `apt install xvfb libgl1-mesa-dri`), fails if the render
+reports a script error or a layout problem, and writes `reader/index.html` to
+`web/index.html` with the page count filled in. The Dockerfile serves `web/`
 from nginx. Deployed on the Precog hub as `hunting-lodge`, the same way as
 flipbook-field.
 
-The export is built **without thread support** (`variant/thread_support=false`
-in `export_presets.cfg`): Godot 4's threaded web export needs SharedArrayBuffer,
-which is a documented upstream problem on macOS/iOS browsers (Chrome on macOS
-routes WebGL through ANGLE's Metal backend) — the `WebGL context lost, please
-reload` a reader ran into a few pages in was this, not our scene. `headers.caddy`
-still sends COOP/COEP; they're harmless with a non-threaded build and cost
-nothing to leave in.
-
 Run `tools/install-hooks.sh` once after cloning. After that, every commit
-touching `project/` or `build.sh` rebuilds `web/` and walks all 28 pages under
-plain `--headless` (`--pagecheck`, no Xvfb needed — it catches a script error
-or a bad page dictionary the same way the screenshot gate does, just without
-needing a GPU), stages the rebuilt `web/`, and — on `main`, on a machine with
+touching `project/`, `reader/` or `build.sh` reprints the book (the render is
+the gate), stages `web/`, and — on `main`, on a machine with
 `/opt/scripts/deploy.sh` — pushes and redeploys in the background after the
-commit lands. `SKIP_BUILD=1 git commit ...` skips the build; `SKIP_DEPLOY=1`
+commit lands. `SKIP_BUILD=1 git commit ...` skips the print; `SKIP_DEPLOY=1`
 skips the push-and-deploy.

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bludleigh</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Two gentle poets visit a house that has been killing things for four hundred years. A graphic novel after P. G. Wodehouse.">
+<meta name="theme-color" content="#efe7d6">
+<link rel="icon" href="pages/page_01.webp">
+<style>
+	/* The pages are rendered by the Godot project at build time (see build.sh):
+	   what ships is the pictures and this page turner. No engine, no WebGL,
+	   nothing for a browser to lose. */
+	html, body { margin: 0; height: 100%; background: #efe7d6; overflow: hidden; }
+	body { display: flex; align-items: center; justify-content: center;
+	       -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+	       cursor: pointer; font: 16px/1.4 Georgia, "Times New Roman", serif; color: #12101a; }
+	#page { max-width: 100vw; max-height: 100vh; width: auto; height: auto;
+	        display: block; object-fit: contain; }
+	#page.hidden { visibility: hidden; }
+	#note { position: fixed; left: 0; right: 0; bottom: 1.2em; text-align: center;
+	        font-style: italic; opacity: 0; transition: opacity .3s; pointer-events: none; }
+	#note.show { opacity: .7; }
+	noscript p { padding: 2em; text-align: center; }
+</style>
+</head>
+<body>
+<img id="page" class="hidden" alt="Bludleigh, page 1" draggable="false">
+<div id="note" aria-live="polite"></div>
+<noscript><p>The pages are under <a href="pages/page_01.webp">pages/</a>.</p></noscript>
+<script>
+(() => {
+	const TOTAL = __TOTAL__;
+	const src = n => `pages/page_${String(n).padStart(2, '0')}.webp`;
+	const img = document.getElementById('page');
+	const note = document.getElementById('note');
+	const cache = new Map();
+	let current = 0;
+
+	const load = n => {
+		if (n < 1 || n > TOTAL) return Promise.resolve();
+		if (!cache.has(n)) {
+			cache.set(n, new Promise(res => {
+				const i = new Image();
+				i.onload = () => res(i);
+				i.onerror = () => res(null);
+				i.src = src(n);
+			}));
+		}
+		return cache.get(n);
+	};
+
+	const say = t => {
+		note.textContent = t;
+		note.classList.add('show');
+		clearTimeout(say.t);
+		say.t = setTimeout(() => note.classList.remove('show'), 1400);
+	};
+
+	const show = async n => {
+		n = Math.max(1, Math.min(TOTAL, n));
+		if (n === current) { if (n === TOTAL) say('The end'); return; }
+		current = n;
+		history.replaceState(null, '', n === 1 ? location.pathname : `#${n}`);
+		const i = await load(n);
+		if (current !== n) return;   // reader has moved on while this loaded
+		img.src = i ? i.src : src(n);
+		img.alt = `Bludleigh, page ${n} of ${TOTAL}`;
+		img.classList.remove('hidden');
+		// Neighbours first, then the rest of the book in the background.
+		load(n + 1).then(() => load(n - 1)).then(() => {
+			for (let k = 1; k <= TOTAL; k++) load(k);
+		});
+	};
+	const next = () => show(current + 1);
+	const prev = () => show(current - 1);
+
+	addEventListener('keydown', e => {
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
+		switch (e.key) {
+			case 'ArrowRight': case ' ': case 'Enter': case 'PageDown': case 'd': case 'D': next(); break;
+			case 'ArrowLeft': case 'Backspace': case 'PageUp': case 'a': case 'A': prev(); break;
+			case 'Home': case 'r': case 'R': show(1); break;
+			case 'End': show(TOTAL); break;
+			default: return;
+		}
+		e.preventDefault();
+	});
+
+	// Click or tap: the left fifth of the page goes back, like turning a real one.
+	let touch = null;
+	addEventListener('pointerdown', e => { touch = { x: e.clientX, y: e.clientY, t: Date.now() }; });
+	addEventListener('pointerup', e => {
+		if (!touch) return;
+		const dx = e.clientX - touch.x, dy = e.clientY - touch.y;
+		touch = null;
+		if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) { dx < 0 ? next() : prev(); return; }
+		if (Math.hypot(dx, dy) > 12) return;
+		e.clientX < innerWidth * 0.2 ? prev() : next();
+	});
+	addEventListener('hashchange', () => show(parseInt(location.hash.slice(1), 10) || 1));
+
+	show(parseInt(location.hash.slice(1), 10) || 1);
+})();
+</script>
+</body>
+</html>

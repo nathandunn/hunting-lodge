@@ -93,7 +93,12 @@ func _ready() -> void:
 const RENDER_BUDGET := 2_000_000.0
 
 
+var _offline := false
+
+
 func _fit_render_scale() -> void:
+	if _offline:
+		return
 	var px := Vector2(DisplayServer.window_get_size())
 	var scale := clampf(sqrt(RENDER_BUDGET / maxf(px.x * px.y, 1.0)), 0.4, 1.0)
 	get_viewport().scaling_3d_scale = scale
@@ -365,9 +370,20 @@ func _memcheck() -> void:
 	get_tree().quit()
 
 
+## The printing press. This is how the book actually ships: build.sh renders
+## every page here, at full resolution with 4x MSAA (no browser GPU budget to
+## respect offline), and the site is those images and a page turner — no
+## engine in the browser at all, which is the only thing that is truly safe in
+## every browser. `--webp=Q` writes lossy WebP at quality Q instead of PNG.
 func _render_all(dir: String) -> void:
+	_offline = true
+	get_viewport().scaling_3d_scale = 1.0
+	get_viewport().msaa_3d = Viewport.MSAA_4X
 	DirAccess.make_dir_recursive_absolute(dir)
 	var only := _arg("--page")
+	var webp := _arg("--webp")
+	var done := 0
+	var problems := 0
 	for i in pages.size():
 		if only != "" and int(only) != i + 1:
 			continue
@@ -375,8 +391,14 @@ func _render_all(dir: String) -> void:
 		for _f in 24:
 			await get_tree().process_frame
 		var img := get_viewport().get_texture().get_image()
-		img.save_png("%s/page_%02d.png" % [dir, i + 1])
+		if webp != "":
+			img.save_webp("%s/page_%02d.webp" % [dir, i + 1], true, clampf(float(webp) / 100.0, 0.0, 1.0))
+		else:
+			img.save_png("%s/page_%02d.png" % [dir, i + 1])
+		done += 1
 		print("shot page %d" % (i + 1))
 		for problem in letters.audit():
+			problems += 1
 			print("LAYOUT page %d: %s" % [i + 1, problem])
+	print("SHOTS COMPLETE %d/%d, %d layout problems" % [done, pages.size() if only == "" else 1, problems])
 	get_tree().quit()

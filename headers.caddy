@@ -1,5 +1,2 @@
-# Godot 4 web builds are exported with thread support, which needs
-# SharedArrayBuffer, which the browser only hands out to a cross-origin-isolated
-# document. Without these two headers the engine aborts at startup.
-header Cross-Origin-Opener-Policy "same-origin"
-header Cross-Origin-Embedder-Policy "require-corp"
+# Nothing special needed: the site is static images and one HTML file. (These
+# were COOP/COEP for a threaded Godot wasm build, which no longer ships.)

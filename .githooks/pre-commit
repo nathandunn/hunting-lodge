@@ -2,25 +2,22 @@
 set -euo pipefail
 [ "${SKIP_BUILD:-0}" = "1" ] && exit 0
 cd "$(git rev-parse --show-toplevel)"
-git diff --cached --name-only | grep -qE '^(project/|build\.sh)' || exit 0
+git diff --cached --name-only | grep -qE '^(project/|reader/|build\.sh)' || exit 0
 GODOT="${GODOT:-$(command -v godot4 || echo /usr/local/bin/godot4)}"
 if [ ! -x "$GODOT" ]; then
 	echo "pre-commit: no Godot at $GODOT - set GODOT, or SKIP_BUILD=1 to commit without a build" >&2
 	exit 1
 fi
+if ! command -v xvfb-run > /dev/null; then
+	echo "pre-commit: no xvfb-run - apt install xvfb libgl1-mesa-dri, or SKIP_BUILD=1" >&2
+	exit 1
+fi
 export HOME="${HOME:-/root}"
-echo "pre-commit: building the web export..." >&2
+echo "pre-commit: printing the book (renders every page; this is also the gate)..." >&2
 if ! bash build.sh "$GODOT" > /tmp/hunting-lodge-build.log 2>&1; then
-	tail -20 /tmp/hunting-lodge-build.log >&2
+	grep -E "LAYOUT|SCRIPT ERROR|Parse Error|^build:" /tmp/hunting-lodge-build.log | head -20 >&2 || true
 	echo "pre-commit: build failed (log: /tmp/hunting-lodge-build.log)" >&2
 	exit 1
 fi
-echo "pre-commit: walking every page..." >&2
-timeout 120 "$GODOT" --headless --path project -- --pagecheck > /tmp/hunting-lodge-gate.log 2>&1 || true
-if grep -qE "SCRIPT ERROR|Parse Error|Invalid " /tmp/hunting-lodge-gate.log || ! grep -q "^PAGECHECK COMPLETE" /tmp/hunting-lodge-gate.log; then
-	grep -E "SCRIPT ERROR|Parse Error|Invalid " /tmp/hunting-lodge-gate.log | head >&2 || true
-	echo "pre-commit: gate failed (log: /tmp/hunting-lodge-gate.log)" >&2
-	exit 1
-fi
-grep "^PAGECHECK COMPLETE" /tmp/hunting-lodge-gate.log >&2
+tail -1 /tmp/hunting-lodge-build.log >&2
 git add web project
